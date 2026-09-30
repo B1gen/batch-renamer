@@ -88,6 +88,15 @@ class BatchRenameApp:
         style.configure("Treeview", rowheight=24)
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 10, "bold"))
         style.configure("Accent.TButton", padding=(14, 6))
+        # Tk only maps Ctrl+A to select-all on Windows; elsewhere it jumps to line start.
+        for sequence in ("<Control-a>", "<Control-A>"):
+            self.root.bind_class("TEntry", sequence, self._select_all)
+
+    @staticmethod
+    def _select_all(event: tk.Event) -> str:
+        event.widget.select_range(0, tk.END)
+        event.widget.icursor(tk.END)
+        return "break"
 
     # ---------- layout ----------
 
