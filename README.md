@@ -18,11 +18,13 @@
 
 ## 获取 exe
 
-### 方法一：从 GitHub Actions 下载（推荐）
+### 方法一：从 Releases 下载（推荐）
 
-每次推送代码后，GitHub 会在 Windows 上自动运行测试并打包（见 `.github/workflows/build-exe.yml`）。
-打开仓库的 **Actions** 页面 → 选择最新一次成功的 “Build Windows exe” → 在底部 **Artifacts** 下载 `BatchRename`，
-解压后双击 `BatchRename.exe` 即可。
+打开仓库右侧的 **Releases**，下载最新版本里的 `BatchRename.exe`，双击即可。
+
+每次推送到 `main`，GitHub 会在 Windows 上自动运行测试、打包 exe、启动 exe 做自检，
+通过后发布到 Releases（见 `.github/workflows/build-exe.yml`）。
+发布的版本号取自 `batch_rename/__init__.py` 里的 `__version__`，改版本号才会生成新的 Release，否则会更新当前版本的 exe。
 
 ### 方法二：在 Windows 上一键打包
 
@@ -53,4 +55,5 @@ batch_rename/core.py  扫描、生成重命名计划、冲突检测、执行与�
 batch_rename/app.py   tkinter 图形界面
 tests/                核心逻辑测试
 build.bat             Windows 一键打包脚本
+packaging/            Release 发布说明
 ```

@@ -2,20 +2,61 @@ name: Build Windows exe
 
 on:
   push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python -m pip install pyinstaller pytest
-      - run: python -m pytest -q
-      - run: python -m PyInstaller --noconfirm --onefile --windowed --name BatchRename main.py
-      - uses: actions/upload-artifact@v4
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pyinstaller pytest
+
+      - name: Unit tests
+        run: python -m pytest -q tests
+
+      - name: Build single-file exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name BatchRename main.py
+
+      - name: Self-test packaged exe
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "report.txt"
+          $process = Start-Process -FilePath "dist\BatchRename.exe" -ArgumentList "--self-test", "`"$report`"" -Wait -PassThru
+          Write-Host "exit code: $($process.ExitCode)"
+          if (Test-Path $report) { Get-Content $report -Encoding utf8 } else { Write-Host "no report written" }
+          if ($process.ExitCode -ne 0) { exit 1 }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: BatchRename
+          name: BatchRename-windows
           path: dist/BatchRename.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "import batch_rename; print(batch_rename.__version__)"
+          $tag = "v$version"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target $env:GITHUB_SHA --title "Batch Rename $version" --notes-file packaging/release_notes.md
+          }
+          gh release upload $tag dist/BatchRename.exe --clobber

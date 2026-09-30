@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+import tempfile
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -396,6 +397,43 @@ def _enable_dpi_awareness() -> None:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except (AttributeError, OSError):
         pass
+
+
+def self_test(report_path: str) -> int:
+    """Used by CI: build the window, run a real rename + undo, and write a report.
+
+    A --windowed exe has no console, so results go to a file instead of stdout.
+    """
+    lines: list[str] = []
+    ok = True
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "sub").mkdir()
+            (folder / "IMG_1.txt").write_text("1")
+            (folder / "sub" / "IMG_2.txt").write_text("2")
+
+            root = tk.Tk()
+            app = BatchRenameApp(root)
+            app.source_dir.set(str(folder))
+            app.remove_prefix.set("IMG_")
+            app.add_prefix.set("旅行_")
+            app._rescan()
+            names = sorted(item.dst.name for item in app.plan if item.will_change)
+            lines.append(f"preview: {names}")
+            ok &= names == ["旅行_1.txt", "旅行_2.txt"]
+
+            result = execute_plan(app.plan)
+            ok &= not result.errors and (folder / "sub" / "旅行_2.txt").exists()
+            ok &= not undo(result.done).errors and (folder / "IMG_1.txt").exists()
+            lines.append(f"rename+undo: {'ok' if ok else 'failed'}")
+            root.destroy()
+    except Exception as exc:  # the report must be written whatever goes wrong
+        ok = False
+        lines.append(f"error: {exc!r}")
+    lines.append("PASS" if ok else "FAIL")
+    Path(report_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return 0 if ok else 1
 
 
 def main() -> None:
