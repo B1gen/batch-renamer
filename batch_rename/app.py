@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import sys
 import tempfile
@@ -49,6 +50,7 @@ class BatchRenameApp:
         root.title(f"{APP_TITLE} {__version__}")
         root.geometry("1180x720")
         root.minsize(900, 560)
+        self._restore_window_geometry()
         self._setup_style()
 
         self.source_dir = tk.StringVar()
@@ -69,6 +71,7 @@ class BatchRenameApp:
 
         self._build_ui()
         self._install_folder_drops()
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         for var in (self.source_dir, self.recursive, self.ext_filter):
             var.trace_add("write", lambda *_: self._schedule_scan())
@@ -102,6 +105,40 @@ class BatchRenameApp:
         event.widget.select_range(0, tk.END)
         event.widget.icursor(tk.END)
         return "break"
+
+    @staticmethod
+    def _settings_path() -> Path:
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+        return base / "BatchRename" / "settings.json"
+
+    def _restore_window_geometry(self) -> None:
+        try:
+            data = json.loads(self._settings_path().read_text(encoding="utf-8"))
+            geometry = data.get("geometry")
+            if isinstance(geometry, str):
+                self.root.geometry(geometry)
+            if data.get("maximized"):
+                self.root.after_idle(lambda: self.root.state("zoomed"))
+        except (AttributeError, OSError, ValueError, tk.TclError):
+            pass
+
+    def _save_window_geometry(self) -> None:
+        try:
+            path = self._settings_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "geometry": self.root.geometry(),
+                "maximized": self.root.state() == "zoomed",
+            }
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(data), encoding="utf-8")
+            temporary.replace(path)
+        except (OSError, tk.TclError):
+            pass
+
+    def _on_close(self) -> None:
+        self._save_window_geometry()
+        self.root.destroy()
 
     # ---------- layout ----------
 
@@ -166,9 +203,6 @@ class BatchRenameApp:
         replace.pack(fill=tk.X, pady=(8, 0))
         field(replace, 0, "查找", self.find_text)
         field(replace, 1, "替换为", self.replace_text)
-        ttk.Label(replace, text="“替换为”留空即删除查找到的文字", foreground="#666").grid(
-            row=2, column=0, columnspan=2, sticky="w"
-        )
 
         match = ttk.Frame(frame)
         match.pack(fill=tk.X, pady=(8, 0))
