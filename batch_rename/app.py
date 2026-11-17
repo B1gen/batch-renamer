@@ -3,11 +3,12 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import shutil
 import sys
 import tempfile
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import __version__
 from .dnd import create_root, drag_drop_available, folder_from_drop, hook_dropfiles
@@ -23,6 +24,7 @@ from .core import (
     parse_extensions,
     scan_files,
     undo,
+    validate_name,
 )
 
 APP_TITLE = "Batch Rename"
@@ -43,6 +45,7 @@ class BatchRenameApp:
         self.root = root
         self.files: list[Path] = []
         self.plan: list[PlanItem] = []
+        self._preview_items: dict[str, PlanItem] = {}
         self.history: list[list[tuple[Path, Path]]] = []
         self._preview_job: str | None = None
         self._scan_job: str | None = None
@@ -220,7 +223,7 @@ class BatchRenameApp:
         frame = ttk.Frame(parent)
         header = ttk.Frame(frame)
         header.pack(fill=tk.X)
-        ttk.Label(header, text="实时预览", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text="实时预览（可拖入文件夹）", style="Title.TLabel").pack(side=tk.LEFT)
         ttk.Checkbutton(header, text="只显示将修改/有问题的文件", variable=self.only_changed).pack(side=tk.RIGHT)
 
         table = ttk.Frame(frame)
@@ -239,6 +242,16 @@ class BatchRenameApp:
         self.tree.tag_configure(STATUS_UNCHANGED, foreground="#888888")
         self.tree.tag_configure(STATUS_CONFLICT, foreground="#b35c00", background="#fff4e0")
         self.tree.tag_configure(STATUS_INVALID, foreground="#b00020", background="#fde8ea")
+        self.tree.bind("<Double-1>", self._open_preview_file)
+        self.tree.bind("<Button-3>", self._show_preview_menu)
+
+        self.preview_menu = tk.Menu(self.root, tearoff=False)
+        self.preview_menu.add_command(label="打开", command=self._open_selected_preview_file)
+        self.preview_menu.add_separator()
+        self.preview_menu.add_command(label="重命名…", command=self._rename_selected_preview_file)
+        self.preview_menu.add_command(label="移动到…", command=self._move_selected_preview_file)
+        self.preview_menu.add_separator()
+        self.preview_menu.add_command(label="删除…", command=self._delete_selected_preview_file)
 
         yscroll = ttk.Scrollbar(table, orient=tk.VERTICAL, command=self.tree.yview)
         xscroll = ttk.Scrollbar(table, orient=tk.HORIZONTAL, command=self.tree.xview)
@@ -257,6 +270,7 @@ class BatchRenameApp:
         targets = (
             (self.source_entry, self._drop_source),
             (self.target_entry, self._drop_target),
+            (self.tree, self._drop_source),
         )
         try:
             self.root.update_idletasks()
@@ -279,6 +293,126 @@ class BatchRenameApp:
             return
         self.target_dir.set(os.path.normpath(folder))
         self.move_enabled.set(True)
+
+    # ---------- preview file actions ----------
+
+    def _item_at(self, _x: int, y: int) -> PlanItem | None:
+        return self._preview_items.get(self.tree.identify_row(y))
+
+    def _selected_preview_item(self) -> PlanItem | None:
+        selected = self.tree.selection()
+        return self._preview_items.get(selected[0]) if selected else None
+
+    def _open_preview_file(self, event: tk.Event) -> str | None:
+        if self.tree.identify_column(event.x) != "#1":
+            return None
+        item = self._item_at(event.x, event.y)
+        if item is not None:
+            self._open_file(item.src)
+        return "break"
+
+    def _show_preview_menu(self, event: tk.Event) -> str | None:
+        item = self._item_at(event.x, event.y)
+        if item is None:
+            return None
+        iid = self.tree.identify_row(event.y)
+        self.tree.selection_set(iid)
+        self.tree.focus(iid)
+        try:
+            self.preview_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.preview_menu.grab_release()
+        return "break"
+
+    def _open_selected_preview_file(self) -> None:
+        item = self._selected_preview_item()
+        if item is not None:
+            self._open_file(item.src)
+
+    def _open_file(self, path: Path) -> None:
+        if not path.is_file():
+            messagebox.showerror(APP_TITLE, f"文件不存在：\n{path}")
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))
+            else:
+                import webbrowser
+                webbrowser.open(path.as_uri())
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, f"无法打开文件：\n{exc}")
+
+    def _rename_selected_preview_file(self) -> None:
+        item = self._selected_preview_item()
+        if item is None:
+            return
+        src = item.src
+        if not src.is_file():
+            messagebox.showerror(APP_TITLE, "文件不存在，预览将刷新。")
+            self._rescan()
+            return
+        new_name = simpledialog.askstring(APP_TITLE, "输入新文件名（包含扩展名）", initialvalue=src.name,
+                                          parent=self.root)
+        if new_name is None:
+            return
+        new_name = new_name.strip()
+        error = validate_name(new_name)
+        if error:
+            messagebox.showerror(APP_TITLE, f"文件名无效：{error}")
+            return
+        dst = src.with_name(new_name)
+        if dst == src:
+            return
+        if dst.exists() and os.path.normcase(str(dst)) != os.path.normcase(str(src)):
+            messagebox.showerror(APP_TITLE, "目标文件名已存在。")
+            return
+        try:
+            src.rename(dst)
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, f"重命名失败：\n{exc}")
+            return
+        self._rescan()
+
+    def _move_selected_preview_file(self) -> None:
+        item = self._selected_preview_item()
+        if item is None:
+            return
+        src = item.src
+        if not src.is_file():
+            messagebox.showerror(APP_TITLE, "文件不存在，预览将刷新。")
+            self._rescan()
+            return
+        folder = filedialog.askdirectory(title="选择移动目标文件夹", initialdir=str(src.parent))
+        if not folder:
+            return
+        dst = Path(folder) / src.name
+        if dst.exists():
+            messagebox.showerror(APP_TITLE, "目标文件夹中已存在同名文件。")
+            return
+        try:
+            shutil.move(str(src), str(dst))
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, f"移动失败：\n{exc}")
+            return
+        self._rescan()
+
+    def _delete_selected_preview_file(self) -> None:
+        item = self._selected_preview_item()
+        if item is None:
+            return
+        src = item.src
+        if not src.is_file():
+            messagebox.showerror(APP_TITLE, "文件不存在，预览将刷新。")
+            self._rescan()
+            return
+        if not messagebox.askyesno(APP_TITLE, f"确定删除这个文件吗？\n\n{src.name}"):
+            return
+        try:
+            src.unlink()
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, f"删除失败：\n{exc}")
+            return
+        self._rescan()
 
     # ---------- actions ----------
 
@@ -365,13 +499,16 @@ class BatchRenameApp:
         self.plan = build_plan(root, self.files, rules) if self.files else []
 
         self.tree.delete(*self.tree.get_children())
+        self._preview_items = {}
         visible = [
             i for i in self.plan
             if not (self.only_changed.get() and i.status == STATUS_UNCHANGED)
         ]
         for index, item in enumerate(visible[:MAX_ROWS]):
+            iid = str(index)
+            self._preview_items[iid] = item
             self.tree.insert(
-                "", tk.END, iid=str(index), tags=(item.status,),
+                "", tk.END, iid=iid, tags=(item.status,),
                 values=(item.src.name, item.dst.name, self._location_text(root, item),
                         self._status_text(item)),
             )
