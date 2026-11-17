@@ -40,6 +40,12 @@ STATUS_LABELS = {
 }
 
 
+def _resource_path(relative_path: str) -> Path:
+    """Resolve bundled files both from source and a PyInstaller executable."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return base / relative_path
+
+
 class BatchRenameApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -51,6 +57,10 @@ class BatchRenameApp:
         self._scan_job: str | None = None
 
         root.title(f"{APP_TITLE} {__version__}")
+        try:
+            root.iconbitmap(default=str(_resource_path("assets/batchrename.ico")))
+        except tk.TclError:
+            pass
         root.geometry("1180x720")
         root.minsize(900, 560)
         self._restore_window_geometry()

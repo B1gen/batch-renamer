@@ -13,7 +13,7 @@ echo [1/2] 安装打包工具和拖放组件 ...
 python -m pip install --upgrade pyinstaller tkinterdnd2 || goto :error
 
 echo [2/2] 打包 BatchRename.exe ...
-python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all tkinterdnd2 --name BatchRename main.py || goto :error
+python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all tkinterdnd2 --icon assets\batchrename.ico --add-data "assets\batchrename.ico;assets" --name BatchRename main.py || goto :error
 
 echo.
 echo 完成！可执行文件位于：%~dp0dist\BatchRename.exe

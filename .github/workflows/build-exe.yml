@@ -29,7 +29,7 @@ jobs:
         run: python -m pytest -q tests
 
       - name: Build single-file exe
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all tkinterdnd2 --name BatchRename main.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all tkinterdnd2 --icon assets/batchrename.ico --add-data "assets/batchrename.ico;assets" --name BatchRename main.py
 
       - name: Self-test packaged exe
         shell: pwsh
