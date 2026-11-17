@@ -260,17 +260,24 @@ class BatchRenameApp:
         )
 
     def _install_folder_drops(self) -> None:
+        """Register only the dedicated drop targets.
+
+        Hooking every Tk child window also intercepts messages sent while ttk
+        creates and destroys its internal controls.  That is unnecessary for
+        a visible drop zone and can make a frozen ``--windowed`` executable
+        exit through a Windows callback before Python can report the error.
+        """
+        targets = (
+            (self.source_drop, self._drop_source),
+            (self.target_drop, self._drop_target),
+        )
         try:
             self.root.update_idletasks()
-            self._hook_tree(self.source_box, self._drop_source)
-            self._hook_tree(self.move_box, self._drop_target)
+            for widget, callback in targets:
+                if widget is not None:
+                    hook_dropfiles(widget, callback)
         except tk.TclError:
             pass
-
-    def _hook_tree(self, widget: tk.Widget, callback) -> None:
-        hook_dropfiles(widget, callback)
-        for child in widget.winfo_children():
-            self._hook_tree(child, callback)
 
     def _drop_source(self, paths: list[str]) -> None:
         folder = folder_from_drop(paths)

@@ -102,6 +102,8 @@ def _ensure_api() -> None:
     user32 = ctypes.windll.user32
     shell32 = ctypes.windll.shell32
     pointer = ctypes.c_void_p
+    wparam = ctypes.c_size_t
+    lparam = ctypes.c_ssize_t
     is_64 = ctypes.sizeof(pointer) == 8
     get_long = user32.GetWindowLongPtrW if is_64 else user32.GetWindowLongW
     set_long = user32.SetWindowLongPtrW if is_64 else user32.SetWindowLongW
@@ -113,14 +115,13 @@ def _ensure_api() -> None:
     get_long.argtypes = [wintypes.HWND, ctypes.c_int]
     set_long.argtypes = [wintypes.HWND, ctypes.c_int, pointer]
 
-    user32.CallWindowProcW.argtypes = [
-        pointer, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
-    ]
-    user32.CallWindowProcW.restype = ctypes.c_ssize_t
-    user32.DefWindowProcW.argtypes = [
-        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
-    ]
-    user32.DefWindowProcW.restype = ctypes.c_ssize_t
+    # WPARAM and LPARAM are pointer-sized.  Use ctypes' pointer-sized types
+    # explicitly, rather than relying on versions of ctypes.wintypes that
+    # declared these aliases as 32-bit values.
+    user32.CallWindowProcW.argtypes = [pointer, wintypes.HWND, wintypes.UINT, wparam, lparam]
+    user32.CallWindowProcW.restype = lparam
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wparam, lparam]
+    user32.DefWindowProcW.restype = lparam
 
     shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
     shell32.DragAcceptFiles.restype = None
@@ -146,8 +147,12 @@ def _shell32():
 
 def _set_window_proc(hwnd: int, proc):
     import ctypes
+    from ctypes import wintypes
+
     user32 = _user32()
     set_long = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
+    set_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+    set_long.restype = ctypes.c_void_p
     ctypes.set_last_error(0)
     old = set_long(hwnd, GWLP_WNDPROC, proc)
     if not old and ctypes.get_last_error():
@@ -167,7 +172,7 @@ def _subclass(hwnd: int, callback) -> None:
     hook = _Hook()
     hook.callback = callback
     wndproc_type = ctypes.WINFUNCTYPE(
-        ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+        ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, ctypes.c_size_t, ctypes.c_ssize_t,
     )
 
     def wndproc(window, msg, wparam, lparam):
