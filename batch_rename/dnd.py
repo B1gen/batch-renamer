@@ -68,12 +68,11 @@ def hook_dropfiles(widget: tk.Widget, callback) -> bool:
             pass
 
     try:
-        first = hwnd not in _HOOKS
         _subclass(hwnd, deliver)
     except OSError:
         return False
-    if first:
-        widget.bind("<Destroy>", lambda _event, window=hwnd: _restore(window), add="+")
+    # Keep the callback alive until process exit.  Restoring a Tk child window
+    # while it is being destroyed can leave Windows calling a freed callback.
     return True
 
 
@@ -200,16 +199,6 @@ def _subclass(hwnd: int, callback) -> None:
     hook.old = _set_window_proc(hwnd, ctypes.cast(hook.wndproc, ctypes.c_void_p))
     _shell32().DragAcceptFiles(hwnd, True)
     _HOOKS[hwnd] = hook
-
-
-def _restore(hwnd: int) -> None:
-    hook = _HOOKS.pop(int(hwnd), None)
-    if hook is None or not hook.old:
-        return
-    try:
-        _set_window_proc(hwnd, hook.old)
-    except OSError:
-        pass
 
 
 def _paths_from_hdrop(hdrop) -> list[str]:
