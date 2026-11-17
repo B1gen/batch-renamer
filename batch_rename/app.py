@@ -60,7 +60,7 @@ class BatchRenameApp:
         self.remove_suffix = tk.StringVar()
         self.find_text = tk.StringVar()
         self.replace_text = tk.StringVar()
-        self.ignore_case = tk.BooleanVar(value=False)
+        self.ignore_case = tk.BooleanVar(value=True)
         self.move_enabled = tk.BooleanVar(value=False)
         self.target_dir = tk.StringVar()
         self.keep_structure = tk.BooleanVar(value=False)
@@ -173,13 +173,6 @@ class BatchRenameApp:
         match = ttk.Frame(frame)
         match.pack(fill=tk.X, pady=(8, 0))
         ttk.Checkbutton(match, text="忽略英文大小写", variable=self.ignore_case).pack(anchor="w")
-        ttk.Label(
-            match,
-            text="删除前缀、删除后缀和查找替换都不区分大小写",
-            foreground="#666",
-            wraplength=280,
-            justify=tk.LEFT,
-        ).pack(anchor="w")
 
         move = ttk.LabelFrame(frame, text="移动", padding=8)
         move.pack(fill=tk.X, pady=(8, 0))
@@ -305,7 +298,7 @@ class BatchRenameApp:
             self.find_text, self.replace_text,
         ):
             var.set("")
-        self.ignore_case.set(False)
+        self.ignore_case.set(True)
         self.move_enabled.set(False)
 
     def _rules(self) -> Rules:
