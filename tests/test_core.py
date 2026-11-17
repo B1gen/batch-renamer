@@ -13,6 +13,7 @@ from batch_rename.core import (
     transform_stem,
     undo,
 )
+from batch_rename.dnd import folder_from_drop
 
 
 def make(root: Path, *names: str) -> None:
@@ -30,6 +31,32 @@ def test_transform_order():
 
 def test_remove_prefix_only_when_present():
     assert transform_stem("abc", Rules(remove_prefix="x")) == "abc"
+
+
+def test_ignore_case_applies_to_prefix_suffix_and_replace():
+    rules = Rules(
+        remove_prefix="img_",
+        remove_suffix="_draft",
+        find="photo",
+        replace="picture",
+        ignore_case=True,
+    )
+    assert transform_stem("IMG_PhOtO_DRAFT", rules) == "picture"
+
+
+def test_case_sensitive_matching_remains_default():
+    rules = Rules(remove_prefix="img_", find="photo", replace="picture")
+    assert transform_stem("IMG_PhOtO", rules) == "IMG_PhOtO"
+
+
+def test_folder_from_drop_prefers_folder_and_uses_file_parent(tmp_path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("test")
+
+    assert folder_from_drop([str(file_path), str(folder)]) == str(folder.resolve())
+    assert folder_from_drop([str(file_path)]) == str(tmp_path.resolve())
 
 
 def test_parse_extensions():

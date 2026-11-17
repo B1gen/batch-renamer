@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ class Rules:
     remove_suffix: str = ""
     find: str = ""
     replace: str = ""
+    ignore_case: bool = False
     move_enabled: bool = False
     target_dir: str = ""
     keep_structure: bool = False
@@ -85,14 +87,32 @@ def scan_files(
     return files
 
 
+def _cut_literal(text: str, piece: str, *, suffix: bool, ignore_case: bool) -> str:
+    """Drop a literal prefix or suffix. Returns text unchanged when it does not match."""
+    if not piece:
+        return text
+    flags = re.IGNORECASE if ignore_case else 0
+    if suffix:
+        match = re.search(re.escape(piece) + r"\Z", text, flags)
+        return text[: match.start()] if match else text
+    match = re.match(re.escape(piece), text, flags)
+    return text[match.end() :] if match else text
+
+
+def _replace_literal(text: str, find: str, replace: str, ignore_case: bool) -> str:
+    if not find:
+        return text
+    if not ignore_case:
+        return text.replace(find, replace)
+    # A callable replacement keeps backslashes in `replace` literal, like str.replace.
+    return re.sub(re.escape(find), lambda _: replace, text, flags=re.IGNORECASE)
+
+
 def transform_stem(stem: str, rules: Rules) -> str:
     """Apply rules to the name without extension: remove first, then replace, then add."""
-    if rules.remove_prefix and stem.startswith(rules.remove_prefix):
-        stem = stem[len(rules.remove_prefix):]
-    if rules.remove_suffix and stem.endswith(rules.remove_suffix):
-        stem = stem[: -len(rules.remove_suffix)]
-    if rules.find:
-        stem = stem.replace(rules.find, rules.replace)
+    stem = _cut_literal(stem, rules.remove_prefix, suffix=False, ignore_case=rules.ignore_case)
+    stem = _cut_literal(stem, rules.remove_suffix, suffix=True, ignore_case=rules.ignore_case)
+    stem = _replace_literal(stem, rules.find, rules.replace, rules.ignore_case)
     return f"{rules.add_prefix}{stem}{rules.add_suffix}"
 
 

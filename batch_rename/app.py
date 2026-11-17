@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
+from .dnd import folder_from_drop, hook_dropfiles
 from .core import (
     STATUS_CONFLICT,
     STATUS_INVALID,
@@ -26,6 +27,9 @@ from .core import (
 APP_TITLE = "Batch Rename"
 PREVIEW_DELAY_MS = 150
 MAX_ROWS = 5000
+START_HINT = (
+    "请选择或拖入一个文件夹开始" if sys.platform == "win32" else "请选择一个文件夹开始"
+)
 
 STATUS_LABELS = {
     STATUS_OK: "将修改",
@@ -58,19 +62,22 @@ class BatchRenameApp:
         self.remove_suffix = tk.StringVar()
         self.find_text = tk.StringVar()
         self.replace_text = tk.StringVar()
+        self.ignore_case = tk.BooleanVar(value=False)
         self.move_enabled = tk.BooleanVar(value=False)
         self.target_dir = tk.StringVar()
         self.keep_structure = tk.BooleanVar(value=False)
         self.only_changed = tk.BooleanVar(value=False)
-        self.summary = tk.StringVar(value="请选择一个文件夹开始")
+        self.summary = tk.StringVar(value=START_HINT)
 
         self._build_ui()
+        self._install_folder_drops()
 
         for var in (self.source_dir, self.recursive, self.ext_filter):
             var.trace_add("write", lambda *_: self._schedule_scan())
         for var in (
             self.add_prefix, self.remove_prefix, self.add_suffix, self.remove_suffix,
-            self.find_text, self.replace_text, self.keep_structure, self.only_changed,
+            self.find_text, self.replace_text, self.ignore_case,
+            self.keep_structure, self.only_changed,
         ):
             var.trace_add("write", lambda *_: self._schedule_preview())
         # Moving into a folder inside the source tree changes which files are scanned.
@@ -106,11 +113,19 @@ class BatchRenameApp:
 
         source = ttk.LabelFrame(outer, text="源文件夹", padding=8)
         source.pack(fill=tk.X)
-        ttk.Entry(source, textvariable=self.source_dir).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.source_box = source
+        self.source_entry = ttk.Entry(source, textvariable=self.source_dir)
+        self.source_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(source, text="浏览…", command=self._browse_source).grid(row=0, column=1)
         ttk.Button(source, text="刷新", command=self._rescan).grid(row=0, column=2, padx=(6, 0))
+        next_row = 1
+        self.source_drop = None
+        if sys.platform == "win32":
+            self.source_drop = self._drop_label(source, "将文件夹拖到这里")
+            self.source_drop.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+            next_row = 2
         options = ttk.Frame(source)
-        options.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        options.grid(row=next_row, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Checkbutton(options, text="包含子文件夹", variable=self.recursive).pack(side=tk.LEFT)
         ttk.Label(options, text="    只处理扩展名：").pack(side=tk.LEFT)
         ttk.Entry(options, textvariable=self.ext_filter, width=24).pack(side=tk.LEFT)
@@ -157,8 +172,20 @@ class BatchRenameApp:
             row=2, column=0, columnspan=2, sticky="w"
         )
 
+        match = ttk.Frame(frame)
+        match.pack(fill=tk.X, pady=(8, 0))
+        ttk.Checkbutton(match, text="忽略英文大小写", variable=self.ignore_case).pack(anchor="w")
+        ttk.Label(
+            match,
+            text="删除前缀、删除后缀和查找替换都不区分大小写",
+            foreground="#666",
+            wraplength=280,
+            justify=tk.LEFT,
+        ).pack(anchor="w")
+
         move = ttk.LabelFrame(frame, text="移动", padding=8)
         move.pack(fill=tk.X, pady=(8, 0))
+        self.move_box = move
         ttk.Checkbutton(move, text="将文件移动到指定文件夹", variable=self.move_enabled).grid(
             row=0, column=0, columnspan=2, sticky="w"
         )
@@ -168,6 +195,10 @@ class BatchRenameApp:
         self.target_button.grid(row=1, column=1, padx=(6, 0))
         self.keep_check = ttk.Checkbutton(move, text="保留子文件夹结构", variable=self.keep_structure)
         self.keep_check.grid(row=2, column=0, columnspan=2, sticky="w")
+        self.target_drop = None
+        if sys.platform == "win32":
+            self.target_drop = self._drop_label(move, "将目标文件夹拖到这里")
+            self.target_drop.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         move.columnconfigure(0, weight=1)
 
         ttk.Label(
@@ -214,6 +245,48 @@ class BatchRenameApp:
         self.empty_label = ttk.Label(table, text="", foreground="#888", anchor="center")
         return frame
 
+    @staticmethod
+    def _drop_label(parent: tk.Widget, text: str) -> tk.Label:
+        return tk.Label(
+            parent,
+            text=text,
+            relief="groove",
+            bd=1,
+            padx=8,
+            pady=8,
+            anchor="w",
+            fg="#3a3a3a",
+            bg="#f4f8fc",
+        )
+
+    def _install_folder_drops(self) -> None:
+        try:
+            self.root.update_idletasks()
+            self._hook_tree(self.source_box, self._drop_source)
+            self._hook_tree(self.move_box, self._drop_target)
+        except tk.TclError:
+            pass
+
+    def _hook_tree(self, widget: tk.Widget, callback) -> None:
+        hook_dropfiles(widget, callback)
+        for child in widget.winfo_children():
+            self._hook_tree(child, callback)
+
+    def _drop_source(self, paths: list[str]) -> None:
+        folder = folder_from_drop(paths)
+        if not folder:
+            messagebox.showinfo(APP_TITLE, "请拖入一个文件夹。")
+            return
+        self.source_dir.set(os.path.normpath(folder))
+
+    def _drop_target(self, paths: list[str]) -> None:
+        folder = folder_from_drop(paths)
+        if not folder:
+            messagebox.showinfo(APP_TITLE, "请拖入一个文件夹。")
+            return
+        self.target_dir.set(os.path.normpath(folder))
+        self.move_enabled.set(True)
+
     # ---------- actions ----------
 
     def _browse_source(self) -> None:
@@ -239,6 +312,7 @@ class BatchRenameApp:
             self.find_text, self.replace_text,
         ):
             var.set("")
+        self.ignore_case.set(False)
         self.move_enabled.set(False)
 
     def _rules(self) -> Rules:
@@ -249,6 +323,7 @@ class BatchRenameApp:
             remove_suffix=self.remove_suffix.get(),
             find=self.find_text.get(),
             replace=self.replace_text.get(),
+            ignore_case=self.ignore_case.get(),
             move_enabled=self.move_enabled.get(),
             target_dir=self.target_dir.get(),
             keep_structure=self.keep_structure.get(),
@@ -313,7 +388,7 @@ class BatchRenameApp:
             counts[item.status] += 1
 
         if not source:
-            message = "请选择一个文件夹开始"
+            message = START_HINT
         elif empty_message:
             message = empty_message
         elif not self.files:
