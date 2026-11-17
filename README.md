@@ -16,8 +16,6 @@
 - **冲突检测**：重名、目标已存在、非法字符、系统保留名称会被标记并自动跳过
 - **撤销**：可逐步撤销本次打开软件后执行过的操作
 
-处理顺序：删除前缀/后缀 → 查找替换 → 添加前缀/后缀。扩展名始终保持不变。
-
 ## 获取 exe
 
 ### 方法一：从 Releases 下载（推荐）
@@ -40,12 +38,12 @@
 python main.py
 ```
 
-只依赖 Python 标准库（tkinter）。Linux 上可能需要先安装 `python3-tk`。
+依赖 `tkinterdnd2` 提供文件夹拖放支持；执行 `build.bat` 时会自动安装。Linux 上可能需要先安装 `python3-tk`。
 
 ## 运行测试
 
 ```bash
-pip install pytest
+pip install pytest tkinterdnd2
 python -m pytest -q
 ```
 

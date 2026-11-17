@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .dnd import folder_from_drop, hook_dropfiles
+from .dnd import create_root, drag_drop_available, folder_from_drop, hook_dropfiles
 from .core import (
     STATUS_CONFLICT,
     STATUS_INVALID,
@@ -27,9 +27,7 @@ from .core import (
 APP_TITLE = "Batch Rename"
 PREVIEW_DELAY_MS = 150
 MAX_ROWS = 5000
-START_HINT = (
-    "请选择或拖入一个文件夹开始" if sys.platform == "win32" else "请选择一个文件夹开始"
-)
+START_HINT = "请选择或拖入一个文件夹开始" if drag_drop_available() else "请选择一个文件夹开始"
 
 STATUS_LABELS = {
     STATUS_OK: "将修改",
@@ -120,7 +118,7 @@ class BatchRenameApp:
         ttk.Button(source, text="刷新", command=self._rescan).grid(row=0, column=2, padx=(6, 0))
         next_row = 1
         self.source_drop = None
-        if sys.platform == "win32":
+        if drag_drop_available():
             self.source_drop = self._drop_label(source, "将文件夹拖到这里")
             self.source_drop.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
             next_row = 2
@@ -196,17 +194,11 @@ class BatchRenameApp:
         self.keep_check = ttk.Checkbutton(move, text="保留子文件夹结构", variable=self.keep_structure)
         self.keep_check.grid(row=2, column=0, columnspan=2, sticky="w")
         self.target_drop = None
-        if sys.platform == "win32":
+        if drag_drop_available():
             self.target_drop = self._drop_label(move, "将目标文件夹拖到这里")
             self.target_drop.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         move.columnconfigure(0, weight=1)
 
-        ttk.Label(
-            frame,
-            text="处理顺序：删除前缀/后缀 → 查找替换 → 添加前缀/后缀\n扩展名始终保持不变。",
-            foreground="#666",
-            justify=tk.LEFT,
-        ).pack(fill=tk.X, pady=(10, 0))
         return frame
 
     def _build_preview(self, parent: tk.Widget) -> ttk.Frame:
@@ -260,13 +252,7 @@ class BatchRenameApp:
         )
 
     def _install_folder_drops(self) -> None:
-        """Register only the dedicated drop targets.
-
-        Hooking every Tk child window also intercepts messages sent while ttk
-        creates and destroys its internal controls.  That is unnecessary for
-        a visible drop zone and can make a frozen ``--windowed`` executable
-        exit through a Windows callback before Python can report the error.
-        """
+        """Register the two visible drop targets."""
         targets = (
             (self.source_drop, self._drop_source),
             (self.target_drop, self._drop_target),
@@ -504,7 +490,7 @@ def self_test(report_path: str) -> int:
             (folder / "IMG_1.txt").write_text("1")
             (folder / "sub" / "IMG_2.txt").write_text("2")
 
-            root = tk.Tk()
+            root = create_root()
             app = BatchRenameApp(root)
             app.source_dir.set(str(folder))
             app.remove_prefix.set("IMG_")
@@ -529,6 +515,6 @@ def self_test(report_path: str) -> int:
 
 def main() -> None:
     _enable_dpi_awareness()
-    root = tk.Tk()
+    root = create_root()
     BatchRenameApp(root)
     root.mainloop()

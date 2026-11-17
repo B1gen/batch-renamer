@@ -1,28 +1,32 @@
-"""Windows Explorer drops onto tkinter widgets, plus path picking for those drops.
+"""Folder drag-and-drop support backed by tkinterdnd2.
 
-Drag-and-drop uses the shell WM_DROPFILES message so the app stays on the
-standard library. Other platforms keep the browse buttons and ignore drops.
+The extension owns the native drag-and-drop integration, avoiding custom
+Windows window-procedure hooks that can crash Tk applications.
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+from typing import Callable
 
 import tkinter as tk
 
-WM_DROPFILES = 0x0233
-GWLP_WNDPROC = -4
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:  # Allows importing core code when the optional UI package is absent.
+    DND_FILES = None
+    TkinterDnD = None
 
-_HOOKS: dict[int, _Hook] = {}
-_api_ready = False
+
+def create_root() -> tk.Tk:
+    """Create a Tk root with native drop support when tkinterdnd2 is installed."""
+    if TkinterDnD is not None:
+        return TkinterDnD.Tk()
+    return tk.Tk()
 
 
-class _Hook:
-    def __init__(self) -> None:
-        self.callback = None
-        self.old = None
-        self.wndproc = None
+def drag_drop_available() -> bool:
+    return DND_FILES is not None
 
 
 def folder_from_drop(paths: list[str | bytes]) -> str | None:
@@ -49,30 +53,24 @@ def folder_from_drop(paths: list[str | bytes]) -> str | None:
     return str(chosen.resolve()) if chosen.exists() else None
 
 
-def hook_dropfiles(widget: tk.Widget, callback) -> bool:
-    """Invoke callback(list[str]) on the Tk thread when files are dropped on widget."""
-    if sys.platform != "win32":
-        return False
-    _ensure_api()
-    try:
-        widget.update_idletasks()
-        hwnd = int(widget.winfo_id())
-    except (tk.TclError, OSError, ValueError):
+def hook_dropfiles(widget: tk.Widget, callback: Callable[[list[str]], None]) -> bool:
+    """Call *callback* on the Tk thread when files are dropped onto *widget*."""
+    if DND_FILES is None:
         return False
 
-    def deliver(paths: list[str], cb=callback, target: tk.Widget = widget) -> None:
-        copied = list(paths)
+    def on_drop(event: tk.Event) -> str:
         try:
-            target.after(0, lambda: cb(copied))
+            paths = list(widget.tk.splitlist(event.data))
         except tk.TclError:
-            pass
+            paths = []
+        callback(paths)
+        return "break"
 
     try:
-        _subclass(hwnd, deliver)
-    except OSError:
+        widget.drop_target_register(DND_FILES)
+        widget.dnd_bind("<<Drop>>", on_drop)
+    except tk.TclError:
         return False
-    # Keep the callback alive until process exit.  Restoring a Tk child window
-    # while it is being destroyed can leave Windows calling a freed callback.
     return True
 
 
@@ -89,132 +87,3 @@ def _decode_dropped(value: str | bytes) -> str:
     else:
         text = str(value)
     return text.strip("\x00").strip()
-
-
-def _ensure_api() -> None:
-    global _api_ready
-    if _api_ready:
-        return
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = ctypes.windll.user32
-    shell32 = ctypes.windll.shell32
-    pointer = ctypes.c_void_p
-    wparam = ctypes.c_size_t
-    lparam = ctypes.c_ssize_t
-    is_64 = ctypes.sizeof(pointer) == 8
-    get_long = user32.GetWindowLongPtrW if is_64 else user32.GetWindowLongW
-    set_long = user32.SetWindowLongPtrW if is_64 else user32.SetWindowLongW
-    for fn in (get_long, set_long):
-        fn.argtypes = [wintypes.HWND, ctypes.c_int, pointer]
-        fn.restype = pointer
-    # GetWindowLong only takes two arguments; setting a third argtype makes
-    # ctypes reject the call. Split them.
-    get_long.argtypes = [wintypes.HWND, ctypes.c_int]
-    set_long.argtypes = [wintypes.HWND, ctypes.c_int, pointer]
-
-    # WPARAM and LPARAM are pointer-sized.  Use ctypes' pointer-sized types
-    # explicitly, rather than relying on versions of ctypes.wintypes that
-    # declared these aliases as 32-bit values.
-    user32.CallWindowProcW.argtypes = [pointer, wintypes.HWND, wintypes.UINT, wparam, lparam]
-    user32.CallWindowProcW.restype = lparam
-    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wparam, lparam]
-    user32.DefWindowProcW.restype = lparam
-
-    shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
-    shell32.DragAcceptFiles.restype = None
-    shell32.DragQueryFileW.argtypes = [
-        wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT,
-    ]
-    shell32.DragQueryFileW.restype = wintypes.UINT
-    shell32.DragFinish.argtypes = [wintypes.HANDLE]
-    shell32.DragFinish.restype = None
-
-    _api_ready = True
-
-
-def _user32():
-    import ctypes
-    return ctypes.windll.user32
-
-
-def _shell32():
-    import ctypes
-    return ctypes.windll.shell32
-
-
-def _set_window_proc(hwnd: int, proc):
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = _user32()
-    set_long = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
-    set_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
-    set_long.restype = ctypes.c_void_p
-    ctypes.set_last_error(0)
-    old = set_long(hwnd, GWLP_WNDPROC, proc)
-    if not old and ctypes.get_last_error():
-        raise OSError(ctypes.get_last_error(), "SetWindowLongPtr failed")
-    return old
-
-
-def _subclass(hwnd: int, callback) -> None:
-    import ctypes
-    from ctypes import wintypes
-
-    existing = _HOOKS.get(hwnd)
-    if existing is not None:
-        existing.callback = callback
-        return
-
-    hook = _Hook()
-    hook.callback = callback
-    wndproc_type = ctypes.WINFUNCTYPE(
-        ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, ctypes.c_size_t, ctypes.c_ssize_t,
-    )
-
-    def wndproc(window, msg, wparam, lparam):
-        if msg == WM_DROPFILES:
-            try:
-                paths = _paths_from_hdrop(wparam)
-            except Exception:
-                paths = []
-            finally:
-                try:
-                    _shell32().DragFinish(wparam)
-                except Exception:
-                    pass
-            try:
-                if hook.callback is not None:
-                    hook.callback(paths)
-            except Exception:
-                pass
-            return 0
-        if hook.old:
-            return _user32().CallWindowProcW(hook.old, window, msg, wparam, lparam)
-        return _user32().DefWindowProcW(window, msg, wparam, lparam)
-
-    hook.wndproc = wndproc_type(wndproc)
-    hook.old = _set_window_proc(hwnd, ctypes.cast(hook.wndproc, ctypes.c_void_p))
-    _shell32().DragAcceptFiles(hwnd, True)
-    _HOOKS[hwnd] = hook
-
-
-def _paths_from_hdrop(hdrop) -> list[str]:
-    import ctypes
-
-    shell32 = _shell32()
-    count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
-    if not count or count > 10000:
-        return []
-    paths: list[str] = []
-    for index in range(count):
-        length = shell32.DragQueryFileW(hdrop, index, None, 0)
-        if not length or length > 32768:
-            continue
-        buf = ctypes.create_unicode_buffer(length + 1)
-        shell32.DragQueryFileW(hdrop, index, buf, length + 1)
-        if buf.value:
-            paths.append(buf.value)
-    return paths
