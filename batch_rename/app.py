@@ -148,19 +148,12 @@ class BatchRenameApp:
 
         source = ttk.LabelFrame(outer, text="源文件夹", padding=8)
         source.pack(fill=tk.X)
-        self.source_box = source
         self.source_entry = ttk.Entry(source, textvariable=self.source_dir)
         self.source_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(source, text="浏览…", command=self._browse_source).grid(row=0, column=1)
         ttk.Button(source, text="刷新", command=self._rescan).grid(row=0, column=2, padx=(6, 0))
-        next_row = 1
-        self.source_drop = None
-        if drag_drop_available():
-            self.source_drop = self._drop_label(source, "将文件夹拖到这里")
-            self.source_drop.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-            next_row = 2
         options = ttk.Frame(source)
-        options.grid(row=next_row, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        options.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Checkbutton(options, text="包含子文件夹", variable=self.recursive).pack(side=tk.LEFT)
         ttk.Label(options, text="    只处理扩展名：").pack(side=tk.LEFT)
         ttk.Entry(options, textvariable=self.ext_filter, width=24).pack(side=tk.LEFT)
@@ -210,7 +203,6 @@ class BatchRenameApp:
 
         move = ttk.LabelFrame(frame, text="移动", padding=8)
         move.pack(fill=tk.X, pady=(8, 0))
-        self.move_box = move
         ttk.Checkbutton(move, text="将文件移动到指定文件夹", variable=self.move_enabled).grid(
             row=0, column=0, columnspan=2, sticky="w"
         )
@@ -220,10 +212,6 @@ class BatchRenameApp:
         self.target_button.grid(row=1, column=1, padx=(6, 0))
         self.keep_check = ttk.Checkbutton(move, text="保留子文件夹结构", variable=self.keep_structure)
         self.keep_check.grid(row=2, column=0, columnspan=2, sticky="w")
-        self.target_drop = None
-        if drag_drop_available():
-            self.target_drop = self._drop_label(move, "将目标文件夹拖到这里")
-            self.target_drop.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         move.columnconfigure(0, weight=1)
 
         return frame
@@ -264,31 +252,16 @@ class BatchRenameApp:
         self.empty_label = ttk.Label(table, text="", foreground="#888", anchor="center")
         return frame
 
-    @staticmethod
-    def _drop_label(parent: tk.Widget, text: str) -> tk.Label:
-        return tk.Label(
-            parent,
-            text=text,
-            relief="groove",
-            bd=1,
-            padx=8,
-            pady=8,
-            anchor="w",
-            fg="#3a3a3a",
-            bg="#f4f8fc",
-        )
-
     def _install_folder_drops(self) -> None:
-        """Register the two visible drop targets."""
+        """Make each folder-path entry accept a dropped folder."""
         targets = (
-            (self.source_drop, self._drop_source),
-            (self.target_drop, self._drop_target),
+            (self.source_entry, self._drop_source),
+            (self.target_entry, self._drop_target),
         )
         try:
             self.root.update_idletasks()
             for widget, callback in targets:
-                if widget is not None:
-                    hook_dropfiles(widget, callback)
+                hook_dropfiles(widget, callback)
         except tk.TclError:
             pass
 
