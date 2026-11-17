@@ -53,12 +53,15 @@ class BatchRenameApp:
         self.plan: list[PlanItem] = []
         self._preview_items: dict[str, PlanItem] = {}
         self.history: list[list[tuple[Path, Path]]] = []
+        self._window_icon: tk.PhotoImage | None = None
         self._preview_job: str | None = None
         self._scan_job: str | None = None
 
         root.title(f"{APP_TITLE} {__version__}")
         try:
             root.iconbitmap(default=str(_resource_path("assets/batchrename.ico")))
+            self._window_icon = tk.PhotoImage(file=str(_resource_path("assets/batchrename-icon.png")))
+            root.iconphoto(True, self._window_icon)
         except tk.TclError:
             pass
         root.geometry("1180x720")
